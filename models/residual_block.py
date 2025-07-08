@@ -123,7 +123,7 @@ class BasicBlocks(tf.keras.layers.Layer):
             layer_kernels.update(block_kernels)
             layer_outputs.update(block_outputs)
 
-        return outputs_dict, layer_inputs, layer_kernels, layer_outputs
+        return outputs_tensor, layer_inputs, layer_kernels, layer_outputs
 
 
 
