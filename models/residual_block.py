@@ -1,7 +1,6 @@
 import tensorflow as tf
 from typing import Optional
 from models.inject_utils import is_input_target, is_weight_target, is_output_target
-from models.inject_layers import InjectConv2D, InjectDense, BackwardInjectConv2D
 
 class BasicBlock(tf.keras.layers.Layer):
     def __init__(self,
@@ -12,6 +11,8 @@ class BasicBlock(tf.keras.layers.Layer):
                  seed=123,
                  inj_args=None):
         super(BasicBlock, self).__init__()
+        from models.inject_layers import InjectConv2D
+
         self.l_name = l_name if l_name is not None else ''
         self.is_first_block_of_first_layer = is_first_block_of_first_layer
         if is_first_block_of_first_layer :
