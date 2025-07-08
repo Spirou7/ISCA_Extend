@@ -372,7 +372,7 @@ class InjectConv2D(tf.keras.layers.Conv2D):
             kernel_size=kernel_size,
             strides=strides,
             padding=padding,
-            use_bias=False,  # Bias is handled manually
+            use_bias=False,
             kernel_regularizer=kernel_regularizer,
             name=l_name)
         self.l_name = l_name
@@ -409,16 +409,13 @@ class InjectConv2D(tf.keras.layers.Conv2D):
 
                 conv_out = super(InjectConv2D, self).call(inputs)
 
-                # Set weights back
                 if is_weight_target(inj_args.inj_type):
                     self.set_weights(inj_args.golden_weights)
 
                 if is_target:
-                    # Inject to output
                     if is_output_target(inj_args.inj_type):
                         conv_out = inj_to_tensor(conv_out, inj_args)
 
-                    # TODO: Correction for INPUT_16 and WT_16
                 return conv_out
 
             conv_out = tf.cond(tf.reduce_all(inject), lambda: do_inj(inputs, inj_args), lambda: no_inj(inputs))
@@ -527,4 +524,74 @@ def backward_batch_norm(grad_out, inputs, bn_gamma, bn_epsilon, bn_mm, bn_mv):
     grad_in = grad_out * bn_gamma * inv_std
 
     return grad_in
+
+
+class InjectDense(tf.keras.layers.Dense):
+    def __init__(self, units, seed, activation=None, use_bias=True, l_name=None, kernel_regularizer=None):
+        super(InjectDense, self).__init__(
+            units=units,
+            activation=activation,
+            use_bias=False, # We handle bias manually
+            kernel_regularizer=kernel_regularizer,
+            name=l_name)
+        self.l_name=l_name
+        self.seed = seed
+        self.has_bias = use_bias
+
+    def build(self, input_shape):
+        super(InjectDense, self).build(input_shape)
+        if self.has_bias:
+            self.bias = self.add_weight(
+                name='bias',
+                shape=(self.units,),
+                initializer='zeros',
+                trainable=True
+            )
+
+    def call(self, inputs, inject=None, inj_args=None):
+        is_target = (inj_args and inj_args.inj_layer == self.l_name)
+
+        if not is_target:
+            dense_out = super(InjectDense, self).call(inputs)
+        else:
+            def no_inj(inputs):
+                return super(InjectDense, self).call(inputs)
+
+            def do_inj(inputs, inj_args):
+                if is_input_target(inj_args.inj_type):
+                    inputs = inj_to_tensor(inputs, inj_args)
+                if is_weight_target(inj_args.inj_type):
+                    self.set_weights([inj_to_tensor(None, inj_args), inj_args.golden_weights[1]])
+
+                dense_out = super(InjectDense, self).call(inputs)
+
+                if is_weight_target(inj_args.inj_type):
+                    self.set_weights(inj_args.golden_weights)
+
+                if is_target:
+                    if is_output_target(inj_args.inj_type):
+                        dense_out = inj_to_tensor(dense_out, inj_args)
+
+                return dense_out
+
+            dense_out = tf.cond(tf.reduce_all(inject), lambda: do_inj(inputs, inj_args), lambda: no_inj(inputs))
+        
+        if self.has_bias:
+            layer_out = tf.nn.bias_add(dense_out, self.bias)
+        else:
+            layer_out = dense_out
+        
+        return layer_out, dense_out
+
+class BackwardInjectDense(tf.keras.layers.Layer):
+    def __init__(self, l_name=None):
+        super(BackwardInjectDense, self).__init__()
+        self.l_name = l_name
+
+    def call(self, grad_out, inputs, kernels):
+        manual_grad_in = tf.matmul(grad_out, tf.transpose(kernels))
+        manual_grad_wt = tf.matmul(tf.transpose(inputs), grad_out)
+        manual_grad_bias = tf.reduce_sum(grad_out, axis=[0])
+
+        return manual_grad_in, manual_grad_wt, manual_grad_bias
 
