@@ -364,44 +364,62 @@ class BackwardInjectDepthwiseConv2D(tf.keras.layers.Layer):
 
 
 class InjectDense(tf.keras.layers.Dense):
-    def __init__(self, units, use_bias=True, activation=None, l_name=None):
-        super(InjectDense, self).__init__(units=units, activation=activation, use_bias=False)
-        self.l_name = l_name
+    def __init__(self, units, seed, activation=None, use_bias=True, l_name=None):
+        super(InjectDense, self).__init__(
+            units=units,
+            activation=activation,
+            use_bias=False, # We handle bias manually
+            name=l_name)
+        self.l_name=l_name
+        self.seed = seed
         self.has_bias = use_bias
+
+    def build(self, input_shape):
+        super(InjectDense, self).build(input_shape)
         if self.has_bias:
-            self.bias_layer = InjectBias()
+            self.bias = self.add_weight(
+                name='bias',
+                shape=(self.units,),
+                initializer='zeros',
+                trainable=True
+            )
 
     def call(self, inputs, inject=None, inj_args=None):
-        if not inject:
-            conv_out = super(InjectDense, self).call(inputs)
+        is_target = (inj_args and inj_args.inj_layer == self.l_name)
+
+        if not is_target:
+            dense_out = super(InjectDense, self).call(inputs)
         else:
-            is_target = (inj_args and inj_args.inj_layer == self.l_name)
-    
-            if is_target:
+            def no_inj(inputs):
+                return super(InjectDense, self).call(inputs)
+
+            def do_inj(inputs, inj_args):
                 if is_input_target(inj_args.inj_type):
                     inputs = inj_to_tensor(inputs, inj_args)
-                elif is_weight_target(inj_args.inj_type):
+                if is_weight_target(inj_args.inj_type):
                     self.set_weights([inj_to_tensor(None, inj_args), inj_args.golden_weights[1]])
 
-            conv_out = super(InjectDense, self).call(inputs)
+                dense_out = super(InjectDense, self).call(inputs)
 
-            # Set weights back
-            if is_weight_target(inj_args.inj_type):
-                self.set_weights(inj_args.golden_weights)
+                # Set weights back
+                if is_weight_target(inj_args.inj_type):
+                    self.set_weights(inj_args.golden_weights)
 
-            if is_target:
-                # Inject to output
-                if is_output_target(inj_args.inj_type):
-                    conv_out = inj_to_tensor(conv_out, inj_args)
+                if is_target:
+                    # Inject to output
+                    if is_output_target(inj_args.inj_type):
+                        dense_out = inj_to_tensor(dense_out, inj_args)
 
-                # TODO: Correction for INPUT_16 and WT_16
+                return dense_out
 
+            dense_out = tf.cond(tf.reduce_all(inject), lambda: do_inj(inputs, inj_args), lambda: no_inj(inputs))
+        
         if self.has_bias:
-            layer_out = self.bias_layer(conv_out)
+            layer_out = tf.nn.bias_add(dense_out, self.bias)
         else:
-            layer_out = conv_out
-
-        return layer_out
+            layer_out = dense_out
+        
+        return layer_out, dense_out
 
 
 
@@ -423,50 +441,30 @@ class BackwardInjectDense(tf.keras.layers.Layer):
 
 
 class InjectConv2D(tf.keras.layers.Conv2D):
-    def __init__(self,
-               filters,
-               kernel_size,
-               strides=(1, 1),
-               padding='valid',
-               data_format=None,
-               dilation_rate=(1, 1),
-               groups=1,
-               activation=None,
-               use_bias=True,
-               kernel_initializer='glorot_normal',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               seed=None,
-               l_name=None,
-               **kwargs):
+    def __init__(self, seed, filters, kernel_size, strides=(1,1), padding='same',
+                 use_bias=True, kernel_regularizer=l2(config.weight_decay),
+                 l_name=None):
         super(InjectConv2D, self).__init__(
-        filters=filters,
-        kernel_size=kernel_size,
-        strides=strides,
-        padding=padding,
-        data_format=data_format,
-        dilation_rate=dilation_rate,
-        groups=groups,
-        activation=activation,
-        use_bias=False,
-        #kernel_initializer=kernel_initializer,
-        kernel_initializer=tf.keras.initializers.GlorotNormal(seed=seed),
-        bias_initializer=bias_initializer,
-        kernel_regularizer=kernel_regularizer,
-        bias_regularizer=bias_regularizer,
-        activity_regularizer=activity_regularizer,
-        kernel_constraint=kernel_constraint,
-        bias_constraint=bias_constraint,
-        **kwargs)
+            filters=filters,
+            kernel_size=kernel_size,
+            strides=strides,
+            padding=padding,
+            use_bias=False,  # Bias is handled manually
+            kernel_regularizer=kernel_regularizer,
+            name=l_name)
         self.l_name = l_name
+        self.seed = seed
         self.has_bias = use_bias
 
+    def build(self, input_shape):
+        super(InjectConv2D, self).build(input_shape)
         if self.has_bias:
-            self.bias_layer = InjectBias()
+            self.bias = self.add_weight(
+                name='bias',
+                shape=(self.filters,),
+                initializer='zeros',
+                trainable=True
+            )
 
     def call(self, inputs, inject=None, inj_args=None):
         is_target = (inj_args and inj_args.inj_layer == self.l_name)
@@ -503,7 +501,7 @@ class InjectConv2D(tf.keras.layers.Conv2D):
             conv_out = tf.cond(tf.reduce_all(inject), lambda: do_inj(inputs, inj_args), lambda: no_inj(inputs))
 
         if self.has_bias:
-            layer_out = self.bias_layer(conv_out)
+            layer_out = tf.nn.bias_add(conv_out, self.bias)
         else:
             layer_out = conv_out
 
@@ -598,4 +596,12 @@ class BackwardInjectConv2D(tf.keras.layers.Layer):
             manual_grad_bias = None
 
         return manual_grad_in, manual_grad_wt, manual_grad_bias, bkwd_layer_inputs, bkwd_layer_kernels, bkwd_layer_outputs
+
+
+# TODO: This backward function is for the specific implementation of resnet
+def backward_batch_norm(grad_out, inputs, bn_gamma, bn_epsilon, bn_mm, bn_mv):
+    inv_std = tf.math.rsqrt(bn_mv + bn_epsilon)
+    grad_in = grad_out * bn_gamma * inv_std
+
+    return grad_in
 
