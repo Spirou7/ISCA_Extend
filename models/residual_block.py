@@ -2,7 +2,6 @@ import tensorflow as tf
 from typing import Optional
 from models.inject_utils import is_input_target, is_weight_target, is_output_target
 from models.inject_layers import InjectConv2D, InjectDense, BackwardInjectConv2D
-from models.random_layers import MyDropout
 
 class BasicBlock(tf.keras.layers.Layer):
     def __init__(self,
