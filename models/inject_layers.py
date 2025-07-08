@@ -100,20 +100,26 @@ def tf_pad_with_stride(x, stride, f_conv, padding):
     return med2
 
 
-class BiasLayer(tf.keras.layers.Layer):
-    def __init__(self, *args, **kwargs):
-        super(BiasLayer, self).__init__(*args, **kwargs)
-        self.bias = None
+class InjectBias(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(InjectBias, self).__init__(**kwargs)
 
     def build(self, input_shape):
-        self.bias = self.add_weight('bias',
-                         #shape=input_shape[1:],
-                         shape=input_shape[-1:],
-                         initializer='zeros',
-                         trainable=True)
+        self.bias = self.add_weight(name='bias',
+                                 shape=(input_shape[-1],),
+                                 initializer=tf.zeros_initializer(),
+                                 trainable=True)
 
     def call(self, x):
-        return x + self.bias
+        return tf.nn.bias_add(x, self.bias)
+
+
+class BackwardInjectBias(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(BackwardInjectBias, self).__init__(**kwargs)
+
+    def call(self, grad_out):
+        return tf.reduce_sum(grad_out, axis=[0,1,2])
 
 
 class InjectReLU(tf.keras.layers.ReLU):
@@ -363,7 +369,7 @@ class InjectDense(tf.keras.layers.Dense):
         self.l_name = l_name
         self.has_bias = use_bias
         if self.has_bias:
-            self.bias_layer = BiasLayer()
+            self.bias_layer = InjectBias()
 
     def call(self, inputs, inject=None, inj_args=None):
         if not inject:
@@ -460,7 +466,7 @@ class InjectConv2D(tf.keras.layers.Conv2D):
         self.has_bias = use_bias
 
         if self.has_bias:
-            self.bias_layer = BiasLayer()
+            self.bias_layer = InjectBias()
 
     def call(self, inputs, inject=None, inj_args=None):
         is_target = (inj_args and inj_args.inj_layer == self.l_name)
