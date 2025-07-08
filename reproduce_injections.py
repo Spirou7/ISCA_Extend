@@ -167,7 +167,9 @@ def main():
             outputs, l_inputs, l_kernels, l_outputs = model(images, training=True, inject=False)
             predictions = outputs['logits']
             return l_inputs[inj_layer], l_kernels[inj_layer], l_outputs[inj_layer]
-        return strategy.run(step1_fn, args=(iter_inputs,))
+        
+        results = strategy.run(step1_fn, args=(iter_inputs,))
+        return [results[0].values, results[1].values, results[2].values]
 
     @tf.function
     def fwrd_inj_train_step2(iter_inputs, inj_args, inj_flag):
@@ -206,7 +208,8 @@ def main():
             _, bkwd_inputs, bkwd_kernels, bkwd_outputs = back_model(man_grad_start, l_inputs, l_kernels)
             return bkwd_inputs[inj_layer], bkwd_kernels[inj_layer], bkwd_outputs[inj_layer]
 
-        return strategy.run(step1_fn, args=(iter_inputs,))
+        results = strategy.run(step1_fn, args=(iter_inputs,))
+        return [results[0].values, results[1].values, results[2].values]
 
     @tf.function
     def bkwd_inj_train_step2(iter_inputs, inj_args, inj_flag):
@@ -242,6 +245,7 @@ def main():
             v_loss = tf.nn.compute_average_loss(v_loss, global_batch_size=config.BATCH_SIZE)
             valid_loss.update_state(v_loss)
             valid_accuracy.update_state(labels, predictions)
+            return v_loss
         return strategy.run(step_fn, args=(next(iterator),))
 
     steps_per_epoch = math.ceil(train_count / config.BATCH_SIZE)
