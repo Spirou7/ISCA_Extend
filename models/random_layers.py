@@ -360,54 +360,52 @@ def _get_noise_shape(x, noise_shape):
 def my_dropout(x, rate, noise_shape=None, seed=None, name=None):
    """Computes dropout: randomly sets elements to zero to prevent overfitting."""
    if x.get_shape().as_list()[0] is None:
-        return x
-    if seed is None:
+       return x
+   if seed is None:
       seed = [np.random.randint(10e6), np.random.randint(10e6)]
-    else:
+   else:
       seed = [seed, seed+1]
-      
-    with ops.name_scope(name, "dropout", [x]) as name:
-      is_rate_number = isinstance(rate, numbers.Real)
-      if is_rate_number and (rate < 0 or rate >= 1):
-        raise ValueError(f"rate must be a scalar tensor or a float in the range [0, 1), got {rate}")
-      
-      x = ops.convert_to_tensor(x, name="x")
-      x_dtype = x.dtype
-      if not x_dtype.is_floating:
-        raise ValueError(f"x has to be a floating point tensor since it's going to be scaled. Got a {x_dtype} tensor instead.")
-      
-      if is_rate_number and rate == 0:
-        random_seed.get_seed(seed)
-        return x
+   with ops.name_scope(name, "dropout", [x]) as name:
+    is_rate_number = isinstance(rate, numbers.Real)
+    if is_rate_number and (rate < 0 or rate >= 1):
+      raise ValueError(f"rate must be a scalar tensor or a float in the range [0, 1), got {rate}")
+    
+    x = ops.convert_to_tensor(x, name="x")
+    x_dtype = x.dtype
+    if not x_dtype.is_floating:
+      raise ValueError(f"x has to be a floating point tensor since it's going to be scaled. Got a {x_dtype} tensor instead.")
+    
+    if is_rate_number and rate == 0:
+       random_seed.get_seed(seed)
+       return x
 
-      is_executing_eagerly = context.executing_eagerly()
-      if not tensor_util.is_tf_type(rate):
-        if is_rate_number:
-          keep_prob = 1 - rate
-          scale = 1 / keep_prob
-          scale = ops.convert_to_tensor(scale, dtype=x_dtype)
-          ret = gen_math_ops.mul(x, scale)
-        else:
-          raise ValueError(f"rate is neither scalar nor scalar tensor {rate!r}")
+    is_executing_eagerly = context.executing_eagerly()
+    if not tensor_util.is_tf_type(rate):
+      if is_rate_number:
+        keep_prob = 1 - rate
+        scale = 1 / keep_prob
+        scale = ops.convert_to_tensor(scale, dtype=x_dtype)
+        ret = gen_math_ops.mul(x, scale)
       else:
-        rate.get_shape().assert_has_rank(0)
-        rate_dtype = rate.dtype
-        if not rate_dtype.is_compatible_with(x_dtype):
-          raise ValueError(
-              f"Tensor dtype {x_dtype.name} is incompatible with Tensor dtype {rate_dtype.name}: {rate!r}")
-        rate = gen_math_ops.cast(rate, x_dtype, name="rate")
-        one_tensor = constant_op.constant(1, dtype=x_dtype)
-        ret = gen_math_ops.real_div(x, gen_math_ops.sub(one_tensor, rate))
+        raise ValueError(f"rate is neither scalar nor scalar tensor {rate!r}")
+    else:
+      rate.get_shape().assert_has_rank(0)
+      rate_dtype = rate.dtype
+      if not rate_dtype.is_compatible_with(x_dtype):
+        raise ValueError(
+           f"Tensor dtype {x_dtype.name} is incompatible with Tensor dtype {rate_dtype.name}: {rate!r}")
+      rate = gen_math_ops.cast(rate, x_dtype, name="rate")
+      one_tensor = constant_op.constant(1, dtype=x_dtype)
+      ret = gen_math_ops.real_div(x, gen_math_ops.sub(one_tensor, rate))
 
-      noise_shape = _get_noise_shape(x, noise_shape)
-      
-      # Use tf.random.stateless_uniform for reproducibility
-      random_tensor = tf.random.stateless_uniform(
-          noise_shape, seed=seed, dtype=x_dtype)
-      
-      keep_mask = random_tensor >= rate
-      ret = gen_math_ops.mul(ret, gen_math_ops.cast(keep_mask, x_dtype))
-      
-      if not is_executing_eagerly:
-        ret.set_shape(x.get_shape())
-      return ret
+    noise_shape = _get_noise_shape(x, noise_shape)
+    
+    # Use tf.random.stateless_uniform for reproducibility
+    random_tensor = tf.random.stateless_uniform(
+        noise_shape, seed=seed, dtype=x_dtype)
+    
+    keep_mask = random_tensor >= rate
+    ret = gen_math_ops.mul(ret, gen_math_ops.cast(keep_mask, x_dtype))
+    if not is_executing_eagerly:
+      ret.set_shape(x.get_shape())
+    return ret
