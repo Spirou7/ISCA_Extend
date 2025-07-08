@@ -2,7 +2,7 @@ import tensorflow as tf
 from config import NUM_CLASSES
 from models.residual_block import BasicBlocks
 from models.inject_layers import InjectConv2D
-from models.random_layers import MyDropout
+from models.dropout import MyDropout
 
 class ResNetTypeI(tf.keras.Model):
     def __init__(self, layer_dims, num_classes=NUM_CLASSES, seed=123):
