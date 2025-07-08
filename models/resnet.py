@@ -1,128 +1,97 @@
 import tensorflow as tf
 from config import NUM_CLASSES
 from models.residual_block import BasicBlocks
-from models.inject_layers import *
-from models.random_layers import *
+from models.inject_layers import InjectConv2D
+from models.random_layers import MyDropout
 
 class ResNetTypeI(tf.keras.Model):
-    def __init__(self, layer_params, seed, drop_out_rate):
+    def __init__(self, layer_dims, num_classes=NUM_CLASSES, seed=123):
         super(ResNetTypeI, self).__init__()
-
-        self.data_augmentation = tf.keras.Sequential([
-          #tf.keras.layers.RandomFlip("horizontal_and_vertical", seed=seed, force_generator=True),
-          MyRandomFlip("horizontal_and_vertical", seed=seed),
-          #tf.keras.layers.experimental.preprocessing.RandomFlip("horizontal_and_vertical"),
-          tf.keras.layers.ZeroPadding2D(padding=(6,6)),
-          MyRandomCrop(32,32,seed=seed),
-          #tf.keras.layers.experimental.preprocessing.RandomCrop(32,32),
-          #tf.keras.layers.experimental.preprocessing.RandomRotation(factor=0.3),
-          #tf.keras.layers.experimental.preprocessing.RandomContrast(0.2)
-          ])
-
+        self.seed = seed
+        self.l_name = 'resnet18'
+        self.in_channel = 64
         self.conv1 = InjectConv2D(filters=64,
-                                            kernel_size=(7, 7),
-                                            strides=2,
-                                            padding="same",
-                                            seed=seed,
-                                            l_name="conv1")
-        self.bn1 = InjectBatchNormalization(momentum=0.9)
-        '''
+                                  kernel_size=(7, 7),
+                                  strides=2,
+                                  padding="same",
+                                  seed=seed,
+                                  l_name=self.l_name + '_conv1')
+        self.bn1 = tf.keras.layers.BatchNormalization(name=self.l_name + '_bn1')
+        self.relu1 = tf.keras.layers.ReLU(name=self.l_name + '_relu1')
         self.pool1 = tf.keras.layers.MaxPool2D(pool_size=(3, 3),
                                                strides=2,
-                                               padding="same")
-        '''
+                                               padding="same",
+                                               name=self.l_name + '_pool1')
+        self.dropout = MyDropout(0.15, self.seed)
 
-        self.layer1 = BasicBlocks(filter_num=64,
-                                  blocks=layer_params[0],
-                                  seed=seed,
-                                  drop_out_rate=drop_out_rate,
-                                  l_name="basicblock_1")
-        self.layer2 = BasicBlocks(filter_num=128,
-                                  blocks=layer_params[1],
-                                  stride=2,
-                                  seed=seed,
-                                  drop_out_rate=drop_out_rate,
-                                  l_name="basicblock_2")
-        self.layer3 = BasicBlocks(filter_num=256,
-                                  blocks=layer_params[2],
-                                  stride=2,
-                                  seed=seed,
-                                  drop_out_rate=drop_out_rate,
-                                  l_name="basicblock_3")
-        self.layer4 = BasicBlocks(filter_num=512,
-                                  blocks=layer_params[3],
-                                  stride=2,
-                                  seed=seed,
-                                  drop_out_rate=drop_out_rate,
-                                  l_name="basicblock_4")
+        self.layer1 = BasicBlocks(filters=64,
+                                  strides=1,
+                                  num_blocks=layer_dims[0],
+                                  l_name=self.l_name + '_layer1')
+        self.layer2 = BasicBlocks(filters=128,
+                                  strides=2,
+                                  num_blocks=layer_dims[1],
+                                  l_name=self.l_name + '_layer2')
+        self.layer3 = BasicBlocks(filters=256,
+                                  strides=2,
+                                  num_blocks=layer_dims[2],
+                                  l_name=self.l_name + '_layer3')
+        self.layer4 = BasicBlocks(filters=512,
+                                  strides=2,
+                                  num_blocks=layer_dims[3],
+                                  l_name=self.l_name + '_layer4')
 
-        self.avgpool = tf.keras.layers.GlobalAveragePooling2D()
-        self.fc = tf.keras.layers.Dense(units=NUM_CLASSES, activation=tf.keras.activations.softmax, kernel_initializer=tf.keras.initializers.GlorotNormal(seed=seed))
+        self.avgpool = tf.keras.layers.GlobalAveragePooling2D(name=self.l_name + '_avgpool')
+        self.fc = tf.keras.layers.Dense(units=num_classes,
+                                        activation=tf.keras.activations.softmax,
+                                        name=self.l_name + '_fc')
 
     def call(self, inputs, training=None, mask=None, inject=None, inj_args=None):
-        outputs = {}
-
         layer_inputs = {}
         layer_kernels = {}
         layer_outputs = {}
+        outputs = {}
 
-        if training:
-            inputs = self.data_augmentation(inputs)
+        layer_inputs[self.l_name + '_conv1'] = inputs
+        x, conv_x = self.conv1(inputs, inject=inject, inj_args=inj_args)
+        layer_kernels[self.l_name + '_conv1'] = self.conv1.weights
+        layer_outputs[self.l_name + '_conv1'] = conv_x
 
-        outputs['in'] = inputs
-
-        layer_inputs[self.conv1.l_name] = inputs
-        layer_kernels[self.conv1.l_name] = self.conv1.weights
-        x, conv_x = self.conv1(inputs)
-        layer_outputs[self.conv1.l_name] = conv_x
-
-        layer_inputs['bn1']= x
-        layer_kernels['bn1'] = self.bn1.weights[:2]
-        layer_kernels['bn1_epsilon'] = self.bn1.epsilon
-        layer_kernels['bn1_moving_mean_var'] = self.bn1.weights[2:]
         x = self.bn1(x, training=training)
-        layer_outputs['bn1'] = x
+        x = self.relu1(x)
+        x = self.pool1(x)
 
-        layer_inputs['relu1'] = x
-        x = tf.nn.relu(x)
-        layer_outputs['relu1'] = x
+        x, l1_inputs, l1_kernels, l1_outputs = self.layer1(x, training=training, inject=inject, inj_args=inj_args)
+        layer_inputs.update(l1_inputs)
+        layer_kernels.update(l1_kernels)
+        layer_outputs.update(l1_outputs)
 
-        #x = self.pool1(x)
-
-        x, block_inputs, block_kernels, block_outputs = self.layer1(x, training=training, inject=inject, inj_args=inj_args)
-        layer_inputs.update(block_inputs)
-        layer_kernels.update(block_kernels)
-        layer_outputs.update(block_outputs)
-
-        outputs['obs'] = x
-
-        x, block_inputs, block_kernels, block_outputs = self.layer2(x, training=training, inject=inject, inj_args=inj_args)
-        layer_inputs.update(block_inputs)
-        layer_kernels.update(block_kernels)
-        layer_outputs.update(block_outputs)
-
-        x, block_inputs, block_kernels, block_outputs = self.layer3(x, training=training, inject=inject, inj_args=inj_args)
-        layer_inputs.update(block_inputs)
-        layer_kernels.update(block_kernels)
-        layer_outputs.update(block_outputs)
-
-        x, block_inputs, block_kernels, block_outputs = self.layer4(x, training=training, inject=inject, inj_args=inj_args)
-        layer_inputs.update(block_inputs)
-        layer_kernels.update(block_kernels)
-        layer_outputs.update(block_outputs)
+        x, l2_inputs, l2_kernels, l2_outputs = self.layer2(x, training=training, inject=inject, inj_args=inj_args)
+        layer_inputs.update(l2_inputs)
+        layer_kernels.update(l2_kernels)
+        layer_outputs.update(l2_outputs)
 
         outputs['grad_start'] = x
+
+        x, l3_inputs, l3_kernels, l3_outputs = self.layer3(x, training=training, inject=inject, inj_args=inj_args)
+        layer_inputs.update(l3_inputs)
+        layer_kernels.update(l3_kernels)
+        layer_outputs.update(l3_outputs)
+
+        x, l4_inputs, l4_kernels, l4_outputs = self.layer4(x, training=training, inject=inject, inj_args=inj_args)
+        layer_inputs.update(l4_inputs)
+        layer_kernels.update(l4_kernels)
+        layer_outputs.update(l4_outputs)
 
         x = self.avgpool(x)
         output = self.fc(x)
 
         outputs['logits'] = output
-
         return outputs, layer_inputs, layer_kernels, layer_outputs
 
-
-
-
 def resnet_18(seed, m_name):
-    return ResNetTypeI(layer_params=[2, 2, 2, 2], seed=seed, drop_out_rate=0 if 'sgd' in m_name else 0.15)
+    return ResNetTypeI(layer_dims=[2, 2, 2, 2], seed=seed)
+
+def resnet_34():
+    return ResNetTypeI(layer_dims=[3, 4, 6, 3])
 
