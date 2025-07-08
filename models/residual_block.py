@@ -51,12 +51,19 @@ class BasicBlock(tf.keras.layers.Layer):
         self.seed = seed
 
     def call(self, inputs, training=None, inject=None, inj_args=None):
+        
+        # Handle dictionary inputs
+        if isinstance(inputs, dict):
+            x = inputs['add']
+        else:
+            x = inputs
+
         layer_inputs = {}
         layer_kernels = {}
         layer_outputs = {}
 
-        layer_inputs[self.l_name + '_conv1'] = inputs
-        conv1_out, raw_conv1_out = self.conv1(inputs, inject=inject, inj_args=inj_args)
+        layer_inputs[self.l_name + '_conv1'] = x
+        conv1_out, raw_conv1_out = self.conv1(x, inject=inject, inj_args=inj_args)
         layer_kernels[self.l_name + '_conv1'] = self.conv1.weights
         layer_outputs[self.l_name + '_conv1'] = raw_conv1_out
 
@@ -71,14 +78,14 @@ class BasicBlock(tf.keras.layers.Layer):
         bn2_out = self.bn2(conv2_out, training=training)
 
         if not self.is_first_block_of_first_layer:
-            layer_inputs[self.l_name + '_shortcut'] = inputs
-            shortcut_out, raw_shortcut_out = self.shortcut(inputs, inject=inject, inj_args=inj_args)
+            layer_inputs[self.l_name + '_shortcut'] = x
+            shortcut_out, raw_shortcut_out = self.shortcut(x, inject=inject, inj_args=inj_args)
             layer_kernels[self.l_name + '_shortcut'] = self.shortcut.weights
             layer_outputs[self.l_name + '_shortcut'] = raw_shortcut_out
 
             output = self.add([bn2_out, shortcut_out])
         else:
-            output = self.add([bn2_out, inputs])
+            output = self.add([bn2_out, x])
 
         output = self.relu2(output)
         outputs = {'add': output}
@@ -108,14 +115,15 @@ class BasicBlocks(tf.keras.layers.Layer):
         layer_kernels = {}
         layer_outputs = {}
 
-        outputs = inputs
+        outputs_tensor = inputs
         for i in range(len(self.blocks.layers)):
-            outputs, block_inputs, block_kernels, block_outputs = self.blocks.layers[i](outputs, training=training, inject=inject, inj_args=inj_args)
+            outputs_dict, block_inputs, block_kernels, block_outputs = self.blocks.layers[i](outputs_tensor, training=training, inject=inject, inj_args=inj_args)
+            outputs_tensor = outputs_dict['add']
             layer_inputs.update(block_inputs)
             layer_kernels.update(block_kernels)
             layer_outputs.update(block_outputs)
 
-        return outputs, layer_inputs, layer_kernels, layer_outputs
+        return outputs_dict, layer_inputs, layer_kernels, layer_outputs
 
 
 
